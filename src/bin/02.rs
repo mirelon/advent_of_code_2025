@@ -31,7 +31,7 @@ fn is_invalid_2(x: usize) -> bool {
         if len % part_len != 0 {
             continue;
         }
-        if (&str == &str[..part_len].repeat(len / part_len)) {
+        if &str == &str[..part_len].repeat(len / part_len) {
             return true;
         }
     }
