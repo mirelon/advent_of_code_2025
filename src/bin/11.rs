@@ -2,7 +2,8 @@ use adv_code_2025::*;
 use anyhow::*;
 use code_timing_macros::time_snippet;
 use const_format::concatcp;
-use std::collections::{HashMap, HashSet};
+use itertools::Itertools;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 
@@ -107,53 +108,124 @@ fn main() -> Result<()> {
     //region Part 2
     println!("\n=== Part 2 ===");
 
+    // SLOW SOLUTION
+    //
+    // fn part2<R: BufRead>(reader: R) -> Result<usize> {
+    //     let graph: HashMap<String, Vec<String>> = reader
+    //         .lines()
+    //         .flatten()
+    //         .map(|line| parse_line(line))
+    //         .collect();
+    //
+    //     fn dfs(
+    //         graph: &HashMap<String, Vec<String>>,
+    //         current: &str,
+    //         visited: &mut HashSet<String>,
+    //     ) -> usize {
+    //         if visited.contains(current) {
+    //             println!("Cycle detected at {}", current);
+    //             panic!("Cycle");
+    //         }
+    //
+    //         if visited.len() < 20 {
+    //             println!("Entering {current} visited {:?}", visited)
+    //         }
+    //
+    //         visited.insert(current.to_string());
+    //
+    //         let downstream = graph
+    //             .get(current)
+    //             .unwrap_or_else(|| panic!("Node {current} is not defined"));
+    //         let mut count = 0;
+    //
+    //         for next in downstream {
+    //             if next == "out" {
+    //                 if visited.contains("dac") && visited.contains("fft") {
+    //                     count += 1;
+    //                 };
+    //                 continue;
+    //             }
+    //             count += dfs(graph, next, visited);
+    //         }
+    //
+    //         visited.remove(current); // allow other branches to reuse nodes
+    //         if visited.len() < 20 {
+    //             println!("Finished visiting {:?}, found {count}", visited)
+    //         }
+    //         count
+    //     }
+    //
+    //     let mut visited = HashSet::new();
+    //     Ok(dfs(&graph, "svr", &mut visited))
+    // }
+
     fn part2<R: BufRead>(reader: R) -> Result<usize> {
-        let graph: HashMap<String, Vec<String>> = reader
-            .lines()
-            .flatten()
-            .map(|line| parse_line(line))
-            .collect();
+        // Parse graph
+        let graph: HashMap<String, Vec<String>> =
+            reader.lines().flatten().map(parse_line).collect();
 
-        fn dfs(
-            graph: &HashMap<String, Vec<String>>,
-            current: &str,
-            visited: &mut HashSet<String>,
-        ) -> usize {
-            if visited.contains(current) {
-                println!("Cycle detected at {}", current);
-                panic!("Cycle");
+        // 1. Compute in-degrees
+        let mut indegree: HashMap<String, usize> = HashMap::new();
+        for (node, outs) in &graph {
+            indegree.entry(node.clone()).or_insert(0);
+            for next in outs {
+                *indegree.entry(next.clone()).or_insert(0) += 1;
             }
-
-            if visited.len() < 20 {
-                println!("Entering {current} visited {:?}", visited)
-            }
-
-            visited.insert(current.to_string());
-
-            let downstream = graph
-                .get(current)
-                .unwrap_or_else(|| panic!("Node {current} is not defined"));
-            let mut count = 0;
-
-            for next in downstream {
-                if next == "out" {
-                    if visited.contains("dac") && visited.contains("fft") {
-                        count += 1;
-                    };
-                    continue;
-                }
-                count += dfs(graph, next, visited);
-            }
-
-            visited.remove(current); // allow other branches to reuse nodes
-            if visited.len() < 20 {
-                println!("Finished visiting {:?}, found {count}", visited)
-            }
-            count
         }
 
-        let mut visited = HashSet::new();
-        Ok(dfs(&graph, "svr", &mut visited))
+        // 2. Kahn’s algorithm: build topological order
+        let mut topo: Vec<String> = Vec::new();
+        let mut queue: VecDeque<String> = indegree
+            .iter()
+            .filter(|(_, &deg)| deg == 0)
+            .map(|(k, _)| k.clone())
+            .collect();
+
+        while let Some(n) = queue.pop_front() {
+            topo.push(n.clone());
+            if let Some(outs) = graph.get(&n) {
+                for out in outs {
+                    let deg = indegree.get_mut(out).unwrap();
+                    *deg -= 1;
+                    if *deg == 0 {
+                        queue.push_back(out.clone());
+                    }
+                }
+            }
+        }
+
+        println!("Topo: {:?}", topo);
+
+        // 3. DP over nodes in topological order
+        // path counts: (both, dac, fft, none)
+        let mut paths: HashMap<String, (usize, usize, usize, usize)> = HashMap::new();
+        paths.insert("svr".to_string(), (0, 0, 0, 1));
+
+        for node in topo {
+            let (both, dac, fft, none) = *paths.get(&node).unwrap_or(&(0, 0, 0, 0));
+
+            println!("Visiting {node}: ({both}, {dac}, {fft}, {none})");
+
+            let nexts = match graph.get(&node) {
+                Some(v) => v,
+                None => continue,
+            };
+
+            for next in nexts {
+                let (nb, nd, nf, nn) = paths.get(next).copied().unwrap_or((0, 0, 0, 0));
+
+                let updated = match next.as_str() {
+                    "dac" => (nb + both + fft, nd + none, 0, 0),
+                    "fft" => (nb + both + dac, 0, nf + none, 0),
+                    _ => (nb + both, nd + dac, nf + fft, nn + none),
+                };
+
+                paths.insert(next.clone(), updated);
+            }
+        }
+
+        // 4. Output
+        Ok(paths.get("out").unwrap().0)
     }
 
     // TODO: Set the expected answer for the test input
